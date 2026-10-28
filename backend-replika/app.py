@@ -1,19 +1,23 @@
 import os
 import secrets
+import sqlite3
 from datetime import datetime, timezone
 from math import asin, cos, isfinite, radians, sin, sqrt
 
 import firebase_admin
 from dotenv import load_dotenv
 from firebase_admin import credentials, db
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+USERS_DB_PATH = os.path.join(BASE_DIR, "users.db")
 
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 API_KEY = os.getenv("API_KEY")
+SECRET_KEY = os.getenv("SECRET_KEY", "geosync-default-session-secret")
 FIREBASE_DB_URL = os.getenv("FIREBASE_DB_URL")
 FIREBASE_CRED_PATH = os.getenv("FIREBASE_CRED_PATH", "serviceAccountKey.json")
+VULN_SQLI = os.getenv("VULN_SQLI", "true").strip().lower() == "true"
 
 if not API_KEY:
     raise RuntimeError("API_KEY belum diset di file .env (lihat .env.example).")
@@ -37,6 +41,7 @@ if not firebase_admin._apps:
     firebase_admin.initialize_app(cred, {"databaseURL": FIREBASE_DB_URL})
 
 app = Flask(__name__)
+app.secret_key = SECRET_KEY
 app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
 
 TELEMETRY_RULES = {
@@ -62,9 +67,102 @@ ALLOWED_COMMANDS = {
     "emergency_stop": ["fuel_cutoff", "crank_stop", "cooling_off"],
 }
 
+DEFAULT_USERS = [
+    ("admin", "geosyncadmin", "admin", "Supervisor Utama GeoSync"),
+    ("kelompok1", "kelompok123", "user", "Operator Traktor Blok A"),
+    ("bagas", "bagas123", "user", "Operator Lapangan Blok B"),
+]
+
 
 def now_ts():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def init_users_db():
+    conn = sqlite3.connect(USERS_DB_PATH)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                role TEXT NOT NULL,
+                full_name TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        fb_users = None
+        try:
+            fb_snapshot = db.reference("/users").get()
+            if isinstance(fb_snapshot, dict):
+                fb_users = list(fb_snapshot.values())
+            elif isinstance(fb_snapshot, list):
+                fb_users = [u for u in fb_snapshot if isinstance(u, dict)]
+        except Exception as exc:
+            print(f"[WARN] gagal membaca /users dari Firebase: {exc}", flush=True)
+
+        if fb_users and len(fb_users) > 0:
+            conn.execute("DELETE FROM users")
+            for u in fb_users:
+                conn.execute(
+                    """
+                    INSERT INTO users (id, username, password, role, full_name, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        u.get("id"),
+                        u.get("username"),
+                        u.get("password"),
+                        u.get("role", "user"),
+                        u.get("full_name", u.get("username")),
+                        u.get("created_at", now_ts()),
+                    ),
+                )
+            conn.commit()
+            print(f"[AUTH-SYNC] Berhasil sinkronisasi {len(fb_users)} user dari Firebase ke SQLite.", flush=True)
+        else:
+            count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            if count == 0:
+                conn.executemany(
+                    "INSERT INTO users (username, password, role, full_name) VALUES (?, ?, ?, ?)",
+                    DEFAULT_USERS,
+                )
+                conn.commit()
+
+            rows = conn.execute(
+                "SELECT id, username, password, role, full_name, created_at FROM users ORDER BY id ASC"
+            ).fetchall()
+            users_sync = {}
+            for row in rows:
+                users_sync[str(row[0])] = {
+                    "id": row[0],
+                    "username": row[1],
+                    "password": row[2],
+                    "role": row[3],
+                    "full_name": row[4],
+                    "created_at": row[5],
+                }
+            try:
+                db.reference("/users").set(users_sync)
+            except Exception as exc:
+                print(f"[WARN] gagal sinkronisasi /users ke Firebase: {exc}", flush=True)
+    finally:
+        conn.close()
+
+
+def get_users_list():
+    conn = sqlite3.connect(USERS_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT id, username, password, role, full_name, created_at FROM users ORDER BY id ASC"
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
 
 
 def is_number(value):
@@ -76,6 +174,8 @@ def is_number(value):
 
 
 def authorized():
+    if session.get("role") == "admin":
+        return True
     provided = request.headers.get("X-API-Key", "")
     try:
         valid = secrets.compare_digest(provided, API_KEY)
@@ -152,9 +252,125 @@ def read_status():
     }
 
 
+def detect_sqli_pattern(text):
+    lowered = text.lower()
+    markers = ("'", '"', "--", "/*", "*/", " or ", " union ", "select ", "1=1")
+    return any(marker in lowered for marker in markers)
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "GET":
+        if "user_id" in session:
+            return redirect(url_for("dashboard"))
+        return render_template("login.html", error=None, vuln_sqli=VULN_SQLI)
+
+    payload = request.get_json(silent=True) if request.is_json else request.form
+    username = str((payload or {}).get("username", "")).strip()
+    password = str((payload or {}).get("password", "")).strip()
+
+    if detect_sqli_pattern(username) or detect_sqli_pattern(password):
+        print(
+            f"[SUSPICIOUS-SQLI] indikasi payload SQL Injection dari {request.remote_addr}: "
+            f"username={username!r}, password={password!r}, vuln_mode={VULN_SQLI}",
+            flush=True,
+        )
+
+    conn = sqlite3.connect(USERS_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        if VULN_SQLI:
+            raw_query = (
+                f"SELECT id, username, role, full_name FROM users "
+                f"WHERE username = '{username}' AND password = '{password}'"
+            )
+            print(f"[AUTH-QUERY] {raw_query}", flush=True)
+            row = conn.execute(raw_query).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT id, username, role, full_name FROM users WHERE username = ? AND password = ?",
+                (username, password),
+            ).fetchone()
+    except sqlite3.Error as exc:
+        print(
+            f"[SUSPICIOUS-SQLI] SQL error dari {request.remote_addr}: {exc}",
+            flush=True,
+        )
+        if request.is_json:
+            return jsonify({"error": f"SQL error: {exc}"}), 400
+        return (
+            render_template(
+                "login.html",
+                error=f"Database Error: {exc}",
+                vuln_sqli=VULN_SQLI,
+            ),
+            400,
+        )
+    finally:
+        conn.close()
+
+    if not row:
+        print(
+            f"[AUTH-FAIL] login gagal dari {request.remote_addr} untuk user={username!r}",
+            flush=True,
+        )
+        if request.is_json:
+            return jsonify({"error": "Username atau password salah"}), 401
+        return (
+            render_template(
+                "login.html",
+                error="Username atau password salah.",
+                vuln_sqli=VULN_SQLI,
+            ),
+            401,
+        )
+
+    session["user_id"] = row["id"]
+    session["username"] = row["username"]
+    session["role"] = row["role"]
+    session["full_name"] = row["full_name"]
+
+    print(
+        f"[AUTH-OK] login berhasil dari {request.remote_addr} -> "
+        f"user={row['username']} (role={row['role']})",
+        flush=True,
+    )
+
+    if request.is_json:
+        return (
+            jsonify(
+                {
+                    "status": "ok",
+                    "username": row["username"],
+                    "role": row["role"],
+                    "full_name": row["full_name"],
+                }
+            ),
+            200,
+        )
+
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/logout", methods=["GET", "POST"])
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
 @app.route("/", methods=["GET"])
 def dashboard():
-    return render_template("dashboard.html")
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    return render_template(
+        "dashboard.html",
+        user={
+            "username": session.get("username"),
+            "role": session.get("role"),
+            "full_name": session.get("full_name"),
+        },
+        vuln_sqli=VULN_SQLI,
+    )
 
 
 @app.route("/api/telemetry", methods=["POST"])
@@ -243,14 +459,21 @@ def queue_command():
     if command not in ALLOWED_COMMANDS:
         return reject("perintah tidak dikenal", data)
 
+    actor = session.get("username", "api-key")
     record = {
         "command": command,
+        "issued_by": actor,
         "status": "accepted",
         "ts": now_ts(),
     }
     new_ref = db.reference("/commands").push(record)
 
-    payload = {"status": "accepted", "id": new_ref.key, "command": command}
+    payload = {
+        "status": "accepted",
+        "id": new_ref.key,
+        "command": command,
+        "issued_by": actor,
+    }
     if ALLOWED_COMMANDS[command]:
         payload["sequence"] = ALLOWED_COMMANDS[command]
     return jsonify(payload), 202
@@ -314,6 +537,13 @@ def create_route():
     )
 
 
+@app.route("/api/users", methods=["GET"])
+def api_users():
+    if not authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    return jsonify({"users": get_users_list()}), 200
+
+
 @app.route("/api/status", methods=["GET"])
 def device_status():
     if not authorized():
@@ -324,9 +554,22 @@ def device_status():
 
 @app.route("/dashboard/data", methods=["GET"])
 def dashboard_data():
+    if "user_id" not in session:
+        return jsonify({"error": "unauthorized"}), 401
+
     payload = read_status()
     payload["history"] = read_history(10)
+    payload["current_user"] = {
+        "username": session.get("username"),
+        "role": session.get("role"),
+        "full_name": session.get("full_name"),
+    }
+    if session.get("role") == "admin":
+        payload["users"] = get_users_list()
     return jsonify(payload), 200
+
+
+init_users_db()
 
 
 if __name__ == "__main__":

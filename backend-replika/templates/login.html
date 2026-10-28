@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Login — GeoSync Control Center</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #07111f;
+  --panel: #0e1b2d;
+  --line: #1e3550;
+  --text: #e8f1f8;
+  --muted: #8fa6bd;
+  --accent: #2dd4bf;
+  --warning: #fbbf24;
+  --danger: #fb7185;
+  --ok: #34d399;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 15% 10%, rgba(45, 212, 191, 0.14), transparent 32rem),
+    radial-gradient(circle at 85% 85%, rgba(56, 189, 248, 0.1), transparent 28rem),
+    var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+.login-card {
+  width: min(440px, 100%);
+  padding: 32px 28px;
+  background: linear-gradient(180deg, rgba(18, 35, 58, 0.92), rgba(10, 22, 38, 0.98));
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+}
+.brand {
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+}
+.brand span { color: var(--accent); }
+.subtitle {
+  margin: 8px 0 22px;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+form {
+  display: grid;
+  gap: 14px;
+}
+label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+input {
+  width: 100%;
+  padding: 11px 13px;
+  color: var(--text);
+  background: #081422;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.92rem;
+}
+input:focus {
+  outline: 2px solid rgba(45, 212, 191, 0.45);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+button {
+  margin-top: 6px;
+  padding: 12px 18px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #04211d;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+button:hover { background: #5eead4; }
+.error-box {
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(251, 113, 133, 0.4);
+  background: rgba(251, 113, 133, 0.12);
+  color: var(--danger);
+  font-size: 0.84rem;
+}
+</style>
+</head>
+<body>
+<div class="login-card">
+  <div class="brand">GEOSYNC <span>AUTH</span></div>
+  <p class="subtitle">Masuk ke portal telemetri & kendali traktor otonom GeoSync.</p>
+
+  {% if error %}
+    <div class="error-box">{{ error }}</div>
+  {% endif %}
+
+  <form method="POST" action="/login">
+    <div>
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" placeholder="Masukkan username" required autocomplete="off">
+    </div>
+    <div>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" placeholder="Masukkan password" required autocomplete="off">
+    </div>
+    <button type="submit">Masuk Portal</button>
+  </form>
+</div>
+</body>
+</html>
