@@ -1,20 +1,40 @@
-import json
 import os
 import secrets
-import sqlite3
+from datetime import datetime, timezone
 from math import asin, cos, isfinite, radians, sin, sqrt
 
+import firebase_admin
 from dotenv import load_dotenv
+from firebase_admin import credentials, db
 from flask import Flask, jsonify, render_template, request
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATABASE_PATH = os.path.join(BASE_DIR, "database.db")
 
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 API_KEY = os.getenv("API_KEY")
+FIREBASE_DB_URL = os.getenv("FIREBASE_DB_URL")
+FIREBASE_CRED_PATH = os.getenv("FIREBASE_CRED_PATH", "serviceAccountKey.json")
 
 if not API_KEY:
-    raise RuntimeError("API_KEY belum diset. Isi file .env (contoh ada di .env.example).")
+    raise RuntimeError("API_KEY belum diset di file .env (lihat .env.example).")
+
+if not FIREBASE_DB_URL:
+    raise RuntimeError("FIREBASE_DB_URL belum diset di file .env (lihat .env.example).")
+
+resolved_cred_path = (
+    FIREBASE_CRED_PATH
+    if os.path.isabs(FIREBASE_CRED_PATH)
+    else os.path.join(BASE_DIR, FIREBASE_CRED_PATH)
+)
+
+if not os.path.isfile(resolved_cred_path):
+    raise RuntimeError(
+        f"File kredensial Firebase tidak ditemukan di: {resolved_cred_path}"
+    )
+
+if not firebase_admin._apps:
+    cred = credentials.Certificate(resolved_cred_path)
+    firebase_admin.initialize_app(cred, {"databaseURL": FIREBASE_DB_URL})
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
@@ -43,64 +63,16 @@ ALLOWED_COMMANDS = {
 }
 
 
+def now_ts():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def is_number(value):
     return (
         isinstance(value, (int, float))
         and not isinstance(value, bool)
         and isfinite(value)
     )
-
-
-def init_db():
-    conn = sqlite3.connect(DATABASE_PATH)
-    try:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS telemetry (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                engine_temp_c REAL NOT NULL,
-                rpm REAL NOT NULL,
-                latitude REAL NOT NULL,
-                longitude REAL NOT NULL,
-                speed_kmh REAL NOT NULL,
-                heading_deg REAL NOT NULL,
-                fuel_pct REAL NOT NULL,
-                thermal_status TEXT NOT NULL,
-                cooling_active INTEGER NOT NULL,
-                ts TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS commands (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                command TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'accepted',
-                ts TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS routes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                waypoints TEXT NOT NULL,
-                distance_m REAL NOT NULL,
-                ts TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def get_db():
-    conn = sqlite3.connect(DATABASE_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
 
 
 def authorized():
@@ -124,16 +96,10 @@ def reject(reason, payload=None):
 
 def thermal_state(engine_temp_c):
     if engine_temp_c >= 105.0:
-        return "critical", 1
+        return "critical", True
     if engine_temp_c >= 95.0:
-        return "warning", 0
-    return "normal", 0
-
-
-def telemetry_to_dict(row):
-    item = dict(row)
-    item["cooling_active"] = bool(item["cooling_active"])
-    return item
+        return "warning", False
+    return "normal", False
 
 
 def haversine_m(start, end):
@@ -143,6 +109,47 @@ def haversine_m(start, end):
     dlon = lon2 - lon1
     h = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
     return 2 * 6371000 * asin(sqrt(min(1.0, h)))
+
+
+def latest_from_ref(path):
+    snapshot = db.reference(path).order_by_key().limit_to_last(1).get()
+    if not snapshot or not isinstance(snapshot, dict):
+        return None
+    for key, val in snapshot.items():
+        if isinstance(val, dict):
+            item = dict(val)
+            item["id"] = key
+            return item
+    return None
+
+
+def read_history(limit):
+    snapshot = db.reference("/telemetry").order_by_key().limit_to_last(limit).get()
+    if not snapshot or not isinstance(snapshot, dict):
+        return []
+    items = []
+    for key, val in snapshot.items():
+        if isinstance(val, dict):
+            row = dict(val)
+            row["id"] = key
+            row["cooling_active"] = bool(row.get("cooling_active", False))
+            items.append(row)
+    items.reverse()
+    return items
+
+
+def read_status():
+    telemetry = latest_from_ref("/telemetry")
+    if telemetry:
+        telemetry["cooling_active"] = bool(telemetry.get("cooling_active", False))
+    command = latest_from_ref("/commands")
+    route = latest_from_ref("/routes")
+    return {
+        "device": "GeoSync",
+        "telemetry": telemetry,
+        "last_command": command,
+        "route": route,
+    }
 
 
 @app.route("/", methods=["GET"])
@@ -177,37 +184,28 @@ def receive_telemetry():
     elif thermal_status == "warning":
         print(f"[THERMAL] suhu mesin {engine_temp_c}C, mendekati batas", flush=True)
 
-    conn = get_db()
-    try:
-        conn.execute(
-            """
-            INSERT INTO telemetry (
-                engine_temp_c, rpm, latitude, longitude,
-                speed_kmh, heading_deg, fuel_pct, thermal_status, cooling_active
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                engine_temp_c,
-                float(data["rpm"]),
-                float(data["latitude"]),
-                float(data["longitude"]),
-                float(data["speed_kmh"]),
-                float(data["heading_deg"]),
-                float(data["fuel_pct"]),
-                thermal_status,
-                cooling_active,
-            ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    record = {
+        "engine_temp_c": engine_temp_c,
+        "rpm": float(data["rpm"]),
+        "latitude": float(data["latitude"]),
+        "longitude": float(data["longitude"]),
+        "speed_kmh": float(data["speed_kmh"]),
+        "heading_deg": float(data["heading_deg"]),
+        "fuel_pct": float(data["fuel_pct"]),
+        "thermal_status": thermal_status,
+        "cooling_active": cooling_active,
+        "ts": now_ts(),
+    }
+
+    new_ref = db.reference("/telemetry").push(record)
 
     return (
         jsonify(
             {
                 "status": "ok",
+                "id": new_ref.key,
                 "thermal_status": thermal_status,
-                "cooling_active": bool(cooling_active),
+                "cooling_active": cooling_active,
             }
         ),
         201,
@@ -229,7 +227,6 @@ def telemetry_history():
         return reject("limit tidak valid", raw_limit)
 
     rows = read_history(limit)
-
     return jsonify({"count": len(rows), "data": rows}), 200
 
 
@@ -246,14 +243,14 @@ def queue_command():
     if command not in ALLOWED_COMMANDS:
         return reject("perintah tidak dikenal", data)
 
-    conn = get_db()
-    try:
-        conn.execute("INSERT INTO commands (command) VALUES (?)", (command,))
-        conn.commit()
-    finally:
-        conn.close()
+    record = {
+        "command": command,
+        "status": "accepted",
+        "ts": now_ts(),
+    }
+    new_ref = db.reference("/commands").push(record)
 
-    payload = {"status": "accepted", "command": command}
+    payload = {"status": "accepted", "id": new_ref.key, "command": command}
     if ALLOWED_COMMANDS[command]:
         payload["sequence"] = ALLOWED_COMMANDS[command]
     return jsonify(payload), 202
@@ -288,29 +285,26 @@ def create_route():
             or not -180 <= longitude <= 180
         ):
             return reject("koordinat tidak valid", data)
-        cleaned.append((float(latitude), float(longitude)))
+        cleaned.append([float(latitude), float(longitude)])
 
     distance_m = sum(
         haversine_m(cleaned[index], cleaned[index + 1])
         for index in range(len(cleaned) - 1)
     )
 
-    conn = get_db()
-    try:
-        cursor = conn.execute(
-            "INSERT INTO routes (name, waypoints, distance_m) VALUES (?, ?, ?)",
-            (name.strip(), json.dumps(cleaned), round(distance_m, 2)),
-        )
-        conn.commit()
-        route_id = cursor.lastrowid
-    finally:
-        conn.close()
+    record = {
+        "name": name.strip(),
+        "waypoints": cleaned,
+        "distance_m": round(distance_m, 2),
+        "ts": now_ts(),
+    }
+    new_ref = db.reference("/routes").push(record)
 
     return (
         jsonify(
             {
                 "status": "ok",
-                "route_id": route_id,
+                "route_id": new_ref.key,
                 "name": name.strip(),
                 "waypoints": len(cleaned),
                 "distance_m": round(distance_m, 2),
@@ -318,48 +312,6 @@ def create_route():
         ),
         201,
     )
-
-
-def read_status():
-    conn = get_db()
-    try:
-        telemetry = conn.execute(
-            "SELECT * FROM telemetry ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        command = conn.execute(
-            "SELECT command, status, ts FROM commands ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        route = conn.execute(
-            "SELECT id, name, waypoints, distance_m, ts FROM routes "
-            "ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-    finally:
-        conn.close()
-
-    payload = {
-        "device": "GeoSync",
-        "telemetry": telemetry_to_dict(telemetry) if telemetry else None,
-        "last_command": dict(command) if command else None,
-        "route": None,
-    }
-
-    if route:
-        route_data = dict(route)
-        route_data["waypoints"] = json.loads(route_data["waypoints"])
-        payload["route"] = route_data
-
-    return payload
-
-
-def read_history(limit):
-    conn = get_db()
-    try:
-        rows = conn.execute(
-            "SELECT * FROM telemetry ORDER BY id DESC LIMIT ?", (limit,)
-        ).fetchall()
-    finally:
-        conn.close()
-    return [telemetry_to_dict(row) for row in rows]
 
 
 @app.route("/api/status", methods=["GET"])
@@ -375,9 +327,6 @@ def dashboard_data():
     payload = read_status()
     payload["history"] = read_history(10)
     return jsonify(payload), 200
-
-
-init_db()
 
 
 if __name__ == "__main__":
