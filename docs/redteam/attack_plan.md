@@ -36,9 +36,11 @@ sudo nmap -p- "$TARGET"
 ```
 
 ### 3. Hasil yang Diharapkan (*Expected*) vs Aktual
-* **Sebelum Hardening:** Port `22/tcp` (OpenSSH), `80/tcp` (Nginx), dan port internal bila belum ditutup terlihat `open` beserta nomor versi lengkap pada header HTTP.
-* **Deteksi Blue Team:** Security Onion menangkap lonjakan paket SYN dan memunculkan alert Sguil `ET SCAN Nmap Scripting Engine` / `ET SCAN Suspicious inbound`.
-* **Setelah Hardening (UFW + `server_tokens off`):** Hanya port `22/tcp` dan `80/tcp` yang `open` (port `5000/tcp` tertutup/filtered), serta header `curl -I http://192.168.10.20` hanya menampilkan `Server: nginx` tanpa versi.
+* **Sebelum Hardening:** Port `22/tcp` (`OpenSSH 8.9p1 Ubuntu 3ubuntu0.18`) dan `80/tcp` (`nginx`) terdeteksi `open`, serta `5000/tcp` terdeteksi `closed`.
+  * ![Recon Nmap Service & OS Detection](evidence/01_recon_nmap_sv_os.jpg)
+  * ![Recon Nmap Full Port Scan](evidence/02_recon_nmap_all_ports.jpg)
+* **Deteksi Blue Team:** Security Onion menangkap lonjakan paket SYN dan memunculkan alert Sguil (`5.1254` `ET SCAN Nmap Scripting Engine`, `5.1255` `ET SCAN Possible Nmap User-Agent`, dan `5.1266` `ET SCAN Suspicious inbound`).
+* **Setelah Hardening (UFW + `server_tokens off`):** Hanya port `22/tcp` dan `80/tcp` yang `open` (seluruh port lain `filtered`), serta header `curl -I http://192.168.10.20` hanya menampilkan `Server: nginx` tanpa versi.
 
 ---
 
@@ -65,10 +67,11 @@ hydra -l bagas -P pass.txt ssh://192.168.10.20 -t 4 -V
 ```
 
 ### 3. Hasil yang Diharapkan (*Expected*) vs Aktual
-* **Sebelum Hardening:** Hydra dapat mencoba seluruh isi `pass.txt` tanpa hambatan hingga menemukan password yang valid.
+* **Sebelum Hardening:** Hydra menguji seluruh isi `pass.txt` tanpa hambatan dan berhasil menemukan password akun `bagas` (`password: 123`).
+  * ![Hydra SSH Brute-Force Sebelum Hardening](evidence/03_ssh_hydra_bruteforce_success.jpg)
 * **Deteksi Blue Team:**
   * Security Onion Sguil memunculkan Alert ID `5.1278` (`ET SCAN LibSSH Based Frequent SSH Connections Likely Brute Force`).
-  * `/var/log/auth.log` pada Target-Node mencatat rentetan `Failed password for bagas from 192.168.10.10`.
+  * `/var/log/auth.log` pada Target-Node mencatat rentetan `Failed password for bagas from 192.168.10.10` diikuti `Accepted password`.
 * **Setelah Hardening (PAM `pwquality` + `PermitRootLogin no` + `Fail2ban`):** Setelah 3 kali kegagalan dalam 300 detik, Fail2ban memblokir IP `192.168.10.10` selama 600 detik (`Banned IP list: 192.168.10.10`), sehingga koneksi Hydra ke-4 langsung ditolak (`Connection reset by peer`).
 
 ---
@@ -108,9 +111,11 @@ done
 
 ### 3. Hasil yang Diharapkan (*Expected*) vs Aktual
 * **Sebelum Mitigasi Rate-Limit:**
-  * Sub-skenario 3a ditolak dengan HTTP `401` (`{"error":"unauthorized"}`).
+  * Saat service backend Flask belum dinyalakan, Nginx mengembalikan `502 Bad Gateway`, dan setelah aktif sub-skenario 3a langsung ditolak dengan HTTP `401 UNAUTHORIZED` (`{"error":"unauthorized"}`).
+    * ![Curl 502 Bad Gateway](evidence/04_web_curl_502_bad_gateway.jpg)
+    * ![Curl 401 Unauthorized](evidence/05_web_curl_401_unauthorized.jpg)
   * Sub-skenario 3b ditolak dengan HTTP `400` (`{"error":"nilai engine_temp_c tidak valid"}`).
-  * Sub-skenario 3c berhasil mencoba seluruh kandidat password pada `/login` dengan respons `401` beruntun (atau `200` jika password tertebak) karena belum ada pembatasan laju request (*rate limiting*).
+  * Sub-skenario 3c berhasil mencoba seluruh kandidat password pada `/login` dengan respons `401` beruntun hingga `200` saat password benar ditemukan karena belum ada pembatasan laju request (*rate limiting*).
 * **Deteksi Blue Team:**
   * Log systemd `journalctl -u backend` mencatat tag `[SUSPICIOUS] unauthorized`, `[SUSPICIOUS] nilai engine_temp_c tidak valid`, dan rentetan `[AUTH-FAIL] login gagal dari 192.168.10.10 untuk user='admin'`.
   * Security Onion Sguil mendeteksi aktivitas `ET POLICY curl User-Agent`.

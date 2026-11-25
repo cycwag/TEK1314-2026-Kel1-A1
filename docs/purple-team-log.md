@@ -28,7 +28,10 @@ export TARGET=192.168.10.20
 sudo nmap -sS -sV -O "$TARGET"
 sudo nmap -p- "$TARGET"
 ```
-**Hasil Awal:** Port `22/tcp` (OpenSSH) dan `80/tcp` (Nginx) terdeteksi terbuka beserta banner versi layanan. Saat pengujian awal Flask, port `5000/tcp` juga sempat terbuka sebelum ditutup di balik reverse proxy.
+**Hasil Awal:** Port `22/tcp` (`OpenSSH 8.9p1 Ubuntu 3ubuntu0.18`) dan `80/tcp` (`nginx`) terdeteksi `open`, serta port `5000/tcp` terdeteksi `closed`.
+
+![Recon Nmap Service & OS Detection](redteam/evidence/01_recon_nmap_sv_os.jpg)
+![Recon Nmap Full Port Scan](redteam/evidence/02_recon_nmap_all_ports.jpg)
 
 ### Tahap 2: Deteksi & Bukti Forensik (Blue Team — `192.168.10.30`)
 Blue Team merekam trafik pada interface sensor `eth0` dan mengimpor berkas `.pcap` ke pipeline IDS Security Onion:
@@ -37,11 +40,13 @@ sudo tcpdump -i eth0 -nn -w /tmp/recon_baseline.pcap
 sudo so-import-pcap /tmp/recon_baseline.pcap
 ```
 **Temuan di Sguil Console:**
-* Muncul alert dengan klasifikasi `Attempted Information Leak`:
+* Muncul alert dengan klasifikasi `Attempted Information Leak` (`Alert ID 5.1254`, `5.1255`, dan `5.1266`):
   * `ET SCAN Nmap Scripting Engine User-Agent Detected`
   * `ET SCAN Possible Nmap User-Agent Observed`
-  * `ET SCAN Suspicious inbound to port ...`
+  * `ET SCAN Suspicious inbound to mySQL port 4333`
 * **Source IP:** `192.168.10.10` -> **Destination IP:** `192.168.10.20`.
+
+![Sguil Alert Reconnaissance Nmap](blueteam/evidence/01_sguil_recon_nmap_alert.jpg)
 
 ### Tahap 3: Analisis Akar Masalah (*Root Cause Analysis*)
 1. **Information Disclosure pada Banner HTTP:** Konfigurasi bawaan Nginx menyertakan nomor versi (`server_tokens on`), yang membantu penyerang memetakan CVE spesifik.
@@ -105,7 +110,9 @@ EOF
 
 hydra -l bagas -P pass.txt ssh://192.168.10.20 -t 4 -V
 ```
-**Hasil Awal (Sebelum Fail2ban):** Hydra dapat menguji seluruh kandidat password di dalam `pass.txt` dengan 4 koneksi paralel tanpa diputus oleh server.
+**Hasil Awal (Sebelum Fail2ban & PAM `pwquality`):** Hydra menguji seluruh kandidat password di dalam `pass.txt` dengan 4 koneksi paralel dan berhasil menemukan password akun `bagas` (`[22][ssh] host: 192.168.10.20 login: bagas password: 123`).
+
+![SSH Hydra Brute-Force Success Before Hardening](redteam/evidence/03_ssh_hydra_bruteforce_success.jpg)
 
 ### Tahap 2: Deteksi & Bukti Forensik (Blue Team — `192.168.10.30` & `192.168.10.20`)
 1. **Sensor IDS (Security Onion):**
@@ -114,11 +121,13 @@ hydra -l bagas -P pass.txt ssh://192.168.10.20 -t 4 -V
    sudo so-import-pcap /tmp/ssh_bruteforce.pcap
    ```
    * **Alert Sguil:** Alert ID `5.1278` — `ET SCAN LibSSH Based Frequent SSH Connections Likely Brute Force` (`Src IP: 192.168.10.10` -> `Dst IP: 192.168.10.20`, `DPort: 22`).
+   ![Sguil Alert 5.1278 SSH Brute Force](blueteam/evidence/02_sguil_ssh_bruteforce_alert_5_1278.jpg)
 2. **Host Log (Target-Node `/var/log/auth.log`):**
    ```bash
-   sudo grep "Failed password" /var/log/auth.log | tail -n 20
+   sudo tail -n 20 /var/log/auth.log
    ```
-   * Tercatat rentetan `Failed password for bagas from 192.168.10.10 port ... ssh2` dalam selang waktu beberapa detik.
+   * Tercatat rentetan `Failed password for bagas from 192.168.10.10 port ... ssh2` dalam selang waktu beberapa detik, diikuti `Accepted password for bagas from 192.168.10.10 port 35534 ssh2`.
+   ![Target auth.log SSH Brute Force](blueteam/evidence/03_target_auth_log_ssh_bruteforce.jpg)
 
 ### Tahap 3: Analisis Akar Masalah (*Root Cause Analysis*)
 1. **Tidak Ada Pembatasan Percobaan Login SSH:** Daemon `sshd` secara bawaan menerima percobaan koneksi baru secara terus-menerus dari IP yang sama meskipun telah gagal berkali-kali.
@@ -200,18 +209,24 @@ for pass in 123456 password admin root toor letmein qwerty; do
     -d "{\"username\":\"admin\",\"password\":\"$pass\"}"
 done
 ```
+**Hasil Awal Eksekusi Web/API:**
+* Ketika service Flask belum aktif di belakang Nginx, request ke `/api/telemetry` menghasilkan `502 Bad Gateway`; setelah service aktif, request tanpa header `X-API-Key` langsung ditolak dengan `HTTP/1.1 401 UNAUTHORIZED` (`{"error":"unauthorized"}`).
+![Curl 502 Bad Gateway](redteam/evidence/04_web_curl_502_bad_gateway.jpg)
+![Curl 401 Unauthorized](redteam/evidence/05_web_curl_401_unauthorized.jpg)
 
 ### Tahap 2: Deteksi & Bukti Forensik (Blue Team — `192.168.10.30` & `192.168.10.20`)
-1. **Application Log (`systemd journalctl`):**
+1. **Application Log (Flask / `systemd journalctl`):**
    ```bash
    sudo journalctl -u backend -n 200 --no-pager | grep -E "\[SUSPICIOUS\]|\[AUTH-FAIL\]|\[AUTH-OK\]|\[THERMAL\]"
    ```
-   Output log:
+   Output log mencatat setiap percobaan akses tanpa key, anomali suhu, serta rentetan percobaan brute-force `POST /login` (`[AUTH-FAIL]`) hingga login berhasil (`[AUTH-OK]`) sebelum rate-limiting diterapkan:
    ```text
    [SUSPICIOUS] unauthorized dari 192.168.10.10 ke /api/telemetry
    [SUSPICIOUS] nilai engine_temp_c tidak valid dari 192.168.10.10: {'engine_temp_c': 999, ...}
-   [AUTH-FAIL] login gagal dari 192.168.10.10 untuk user='admin'
+   [AUTH-FAIL] login gagal dari 127.0.0.1 untuk user='admin'
+   [AUTH-OK] login berhasil dari 127.0.0.1 -> user=admin (role=admin)
    ```
+   ![Target Flask Log Web Login Brute Force](blueteam/evidence/04_target_flask_log_web_bruteforce.jpg)
 2. **Nginx Access Log (`/var/log/nginx/access.log`):**
    ```bash
    sudo grep -E " 401 | 400 | 503 " /var/log/nginx/access.log | tail -n 20

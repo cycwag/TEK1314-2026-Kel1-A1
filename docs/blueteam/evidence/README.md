@@ -1,15 +1,45 @@
 # Direktori Bukti (Evidence) — Blue Team
 
-Folder ini berisi artefak dan tangkapan layar (*screenshot*) hasil deteksi, konfigurasi hardening, serta verifikasi pasca-mitigasi oleh **Blue Team** pada `Target-Node` (`192.168.10.20`) dan `Monitoring-Node` (`192.168.10.30`).
+Folder ini berisi artefak dan tangkapan layar (*screenshot*) hasil deteksi sensor **Security Onion IDS (`192.168.10.30`)** serta log forensik pada **Target-Node (`192.168.10.20`)**.
 
-## Daftar Bukti & Referensi Dokumentasi
+---
 
-| Kategori / Skenario | Deskripsi Bukti | Lokasi / Referensi |
-|---|---|---|
-| **Instalasi & Sensor Monitoring** | VM Security Onion & Workstation Lab aktif pada VirtualBox | [`../../DOKUMENTASI_INSTALASI_UTAMA/`](../../DOKUMENTASI_INSTALASI_UTAMA/) |
-| **Hardening Kategori A** | Uji `passwd bagas` (PAM `pwquality`) & pembatasan hak akses direktori `/opt/shared-data` (`user public`) | [`../hardening_kategori_A.md`](../hardening_kategori_A.md) |
-| **Hardening Kategori B** | Konfigurasi `ufw status verbose`, `unattended-upgrades`, dan penonaktifan 5 layanan non-esensial | [`../hardening_kategori_B.md`](../hardening_kategori_B.md) |
-| **Hardening Kategori C** | Pemisahan secret `.env`, validasi input `TELEMETRY_RULES`, logging `[SUSPICIOUS]`, dan RBAC Dashboard (`user` vs `admin`) | [`../hardening_checklist.md`](../hardening_checklist.md) |
-| **Deteksi & Verifikasi Skenario 1 (Recon)** | Alert Sguil `ET SCAN Nmap`, output `ufw status verbose`, dan `curl -I http://192.168.10.20` (`Server: nginx` tanpa versi) | [`../../purple-team-log.md`](../../purple-team-log.md) |
-| **Deteksi & Verifikasi Skenario 2 (SSH Brute-Force)** | Alert Sguil ID `5.1278` (`ET SCAN LibSSH Based Frequent SSH Connections Likely Brute Force`), `/var/log/auth.log`, dan `fail2ban-client status sshd` (`Banned IP: 192.168.10.10`) | [`../../purple-team-log.md`](../../purple-team-log.md) |
-| **Deteksi & Verifikasi Skenario 3 (Web/API Attack)** | Log `journalctl -u backend` (`[SUSPICIOUS]`, `[AUTH-FAIL]`), `/var/log/nginx/access.log`, Alert Sguil `ET POLICY curl User-Agent`, dan hasil rate-limit Nginx (`401` x4 -> `503` x4) | [`../../purple-team-log.md`](../../purple-team-log.md) |
+## 1. Deteksi Skenario 1 — Network & Service Reconnaissance
+
+### Alert Sguil untuk Pemindaian Nmap (`01_sguil_recon_nmap_alert.jpg`)
+* **Sensor:** `seconion` (`192.168.10.30`)
+* **Source IP:** `192.168.10.10` -> **Destination IP:** `192.168.10.20`
+* **Alert ID & Event Message:**
+  * `5.1254` — `ET SCAN Nmap Scripting Engine User-Agent Detected` (DPort `80`)
+  * `5.1255` — `ET SCAN Possible Nmap User-Agent Observed` (DPort `80`)
+  * `5.1266` — `ET SCAN Suspicious inbound to mySQL port 4333` (DPort `4333`)
+
+![Sguil Alert Reconnaissance Nmap](01_sguil_recon_nmap_alert.jpg)
+
+---
+
+## 2. Deteksi Skenario 2 — SSH Credential Brute-Force (Sebelum Hardening)
+
+### a. Alert Sguil untuk Serangan Brute-Force SSH (`02_sguil_ssh_bruteforce_alert_5_1278.jpg`)
+* **Alert ID:** `5.1278` ( beserta rangkaian scan `5.1228` s.d. `5.1242`)
+* **Source IP:** `192.168.10.10` (`SPort: 35544`) -> **Destination IP:** `192.168.10.20` (`DPort: 22`)
+* **Event Message:** `ET SCAN LibSSH Based Frequent SSH Connections Likely Brute Force`
+
+![Sguil Alert 5.1278 SSH Brute Force](02_sguil_ssh_bruteforce_alert_5_1278.jpg)
+
+### b. Bukti Forensik `/var/log/auth.log` pada Target-Node (`03_target_auth_log_ssh_bruteforce.jpg`)
+Perintah: `sudo tail -n 20 /var/log/auth.log`
+* Mencatat rentetan `Failed password for bagas from 192.168.10.10` pada berbagai port sumber (`35530`, `35544`, `35522`, `35534`), diikuti oleh `Accepted password for bagas from 192.168.10.10 port 35534 ssh2` saat password lemah (`123`) berhasil ditebak sebelum hardening diterapkan.
+
+![Target auth.log SSH Brute Force](03_target_auth_log_ssh_bruteforce.jpg)
+
+---
+
+## 3. Deteksi Skenario 3 — Web & IoT API Exploitation (Sebelum Rate-Limit Nginx)
+
+### Log Aplikasi Flask pada Target-Node (`04_target_flask_log_web_bruteforce.jpg`)
+* Mencatat rentetan percobaan brute-force login ke endpoint `POST /login` yang diteruskan oleh reverse proxy:
+  * 6x `[AUTH-FAIL] login gagal dari 127.0.0.1 untuk user='admin'` (`"POST /login HTTP/1.0" 401 -`)
+  * Diikuti oleh `[AUTH-OK] login berhasil dari 127.0.0.1 -> user=admin (role=admin)` (`"POST /login HTTP/1.0" 200 -`) karena belum adanya pembatasan laju request (*rate-limiting*) di Nginx.
+
+![Target Flask Log Web Login Brute Force](04_target_flask_log_web_bruteforce.jpg)

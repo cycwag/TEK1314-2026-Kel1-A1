@@ -92,19 +92,26 @@ Setiap skenario serangan dalam [`../redteam/attack_plan.md`](../redteam/attack_p
 ### 4.2 Analisis Deteksi & Root Cause per Skenario
 
 1. **Skenario 1 — Network & Service Reconnaissance:**
-   * **Deteksi:** Perekaman `tcpdump -i eth0 -nn -w /tmp/recon_baseline.pcap` dan impor via `so-import-pcap` memicu alert `ET SCAN Nmap Scripting Engine` dan `ET SCAN Suspicious inbound` di Sguil dari `192.168.10.10` ke `192.168.10.20`.
+   * **Deteksi:** Perekaman `tcpdump -i eth0 -nn -w /tmp/recon_baseline.pcap` dan impor via `so-import-pcap` memicu alert `5.1254` (`ET SCAN Nmap Scripting Engine`), `5.1255` (`ET SCAN Possible Nmap User-Agent`), dan `5.1266` (`ET SCAN Suspicious inbound`) di Sguil dari `192.168.10.10` ke `192.168.10.20`.
+   * ![Recon Nmap Service & OS Detection](../redteam/evidence/01_recon_nmap_sv_os.jpg)
+   * ![Sguil Alert Reconnaissance Nmap](../blueteam/evidence/01_sguil_recon_nmap_alert.jpg)
    * **Root Cause:** Sebelum firewall UFW dikonfigurasi dengan *default deny*, port internal berisiko diakses langsung dari jaringan, dan direktif bawaan `server_tokens on` pada Nginx menampilkan nomor versi spesifik pada header HTTP.
 2. **Skenario 2 — SSH Credential Brute-Force:**
-   * **Deteksi:** Eksekusi `hydra -l bagas -P pass.txt ssh://192.168.10.20 -t 4 -V` terdeteksi oleh Security Onion dengan **Alert ID `5.1278`** (`ET SCAN LibSSH Based Frequent SSH Connections Likely Brute Force`). Log `/var/log/auth.log` pada Target-Node juga merekam deretan `Failed password for bagas from 192.168.10.10`.
+   * **Deteksi:** Eksekusi `hydra -l bagas -P pass.txt ssh://192.168.10.20 -t 4 -V` berhasil menebak password lemah (`123`) sebelum hardening, dan terdeteksi oleh Security Onion dengan **Alert ID `5.1278`** (`ET SCAN LibSSH Based Frequent SSH Connections Likely Brute Force`). Log `/var/log/auth.log` pada Target-Node juga merekam deretan `Failed password for bagas from 192.168.10.10` diikuti `Accepted password`.
+   * ![Hydra SSH Brute Force](../redteam/evidence/03_ssh_hydra_bruteforce_success.jpg)
+   * ![Sguil Alert 5.1278 SSH Brute Force](../blueteam/evidence/02_sguil_ssh_bruteforce_alert_5_1278.jpg)
+   * ![Target auth.log SSH Brute Force](../blueteam/evidence/03_target_auth_log_ssh_bruteforce.jpg)
    * **Root Cause:** Daemon OpenSSH secara bawaan tidak memblokir IP yang melakukan kegagalan autentikasi berulang lintas koneksi TCP. Tanpa Fail2ban dan kebijakan kompleksitas password PAM, akun dengan password kamus akan berhasil ditembus.
 3. **Skenario 3 — Web & IoT API Exploitation:**
-   * **Deteksi:** Log systemd `journalctl -u backend` mencatat secara presisi:
+   * **Deteksi:** Request tanpa `X-API-Key` ke `/api/telemetry` ditolak dengan `HTTP/1.1 401 UNAUTHORIZED` (`{"error":"unauthorized"}`), sedangkan log aplikasi Flask mencatat setiap percobaan akses tanpa key, anomali suhu, serta rentetan percobaan brute-force `POST /login`:
      ```text
      [SUSPICIOUS] unauthorized dari 192.168.10.10 ke /api/telemetry
      [SUSPICIOUS] nilai engine_temp_c tidak valid dari 192.168.10.10: {'engine_temp_c': 999, ...}
-     [AUTH-FAIL] login gagal dari 192.168.10.10 untuk user='admin'
+     [AUTH-FAIL] login gagal dari 127.0.0.1 untuk user='admin'
+     [AUTH-OK] login berhasil dari 127.0.0.1 -> user=admin (role=admin)
      ```
-     Selain itu, `/var/log/nginx/access.log` mencatat deretan status `401` dan `400`, serta Sguil mendeteksi `ET POLICY curl User-Agent`.
+   * ![Curl 401 Unauthorized](../redteam/evidence/05_web_curl_401_unauthorized.jpg)
+   * ![Target Flask Log Web Login Brute Force](../blueteam/evidence/04_target_flask_log_web_bruteforce.jpg)
    * **Root Cause:** Walaupun endpoint `/api/telemetry` sudah menolak request tanpa key (`401`) dan payload anomali (`400`), endpoint `POST /login` awalnya belum dilengkapi pembatas laju (*rate limiting*) di layer reverse proxy Nginx, sehingga penyerang dapat melakukan brute-force password web secara terus-menerus dan membebani pembacaan node `/users` di Firebase Cloud.
 
 ---
