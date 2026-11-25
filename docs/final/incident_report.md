@@ -138,10 +138,23 @@ Red Team mengulangi ketiga skenario serangan untuk membuktikan efektivitas mitig
 
 | Skenario Uji Ulang | Perintah Verifikasi | Hasil Sebelum Hardening | Hasil Sesudah Hardening (Aktual) |
 |---|---|---|---|
-| **Verifikasi 1:** Reconnaissance | `sudo nmap -sS -sV 192.168.10.20` & `curl -I http://192.168.10.20` | Port internal terekspos & header HTTP menampilkan versi Nginx lengkap. | Hanya port `22` & `80` yang `open` (port `5000` tertutup/filtered); header hanya menampilkan `Server: nginx`. |
-| **Verifikasi 2:** SSH Brute-Force | `hydra -l bagas -P pass.txt ssh://192.168.10.20 -t 4 -V` & `sudo fail2ban-client status sshd` | Hydra menguji seluruh wordlist tanpa hambatan. | Koneksi ke-4 ditolak; Fail2ban menampilkan `Banned IP list: 192.168.10.10`; uji `passwd` menolak sandi lemah (`BAD PASSWORD`). |
+| **Verifikasi 1:** Reconnaissance | `sudo nmap -sS -sV 192.168.10.20` & `curl -I http://192.168.10.20` | Port internal terekspos & header HTTP menampilkan versi Nginx lengkap. | Hanya port `22` & `80` yang `open` (`998 filtered tcp ports`, port `5000` tertutup); header hanya menampilkan `Server: nginx`. |
+| **Verifikasi 2:** SSH Brute-Force | `hydra -l bagas -P pass.txt ssh://192.168.10.20 -t 4 -V` & `sudo fail2ban-client status sshd` | Hydra menemukan `password: 123` tanpa hambatan. | Jail `sshd` Fail2ban aktif; serangan ulang Hydra gagal menembus akun (`0 valid password found`); uji `passwd` menolak sandi lemah (`BAD PASSWORD`). |
 | **Verifikasi 3a & 3b:** API Auth & Validation | `curl -X POST /api/telemetry` (tanpa key & suhu `999 C`) | Berisiko menyuntikkan data sensor palsu bila tidak divalidasi. | Tanpa key ditolak `HTTP 401`; suhu `999 C` ditolak `HTTP 400` disertai pencatatan log `[SUSPICIOUS]`. |
-| **Verifikasi 3c:** Web Login Rate-Limit | Loop 8x request cepat ke `POST http://192.168.10.20/login` | Seluruh 8 request dijawab `HTTP 401` (tidak ada rate-limit). | Output: `401, 401, 401, 401, 503, 503, 503, 503` (request ke-5 s.d. 8 diblokir Nginx; telemetri valid tetap `201 Created`). |
+| **Verifikasi 3c:** Web Login Rate-Limit | Loop 8x request cepat ke `POST http://192.168.10.20/login` | Seluruh percobaan dijawab `HTTP 401` hingga `200` (tidak ada rate-limit). | Output: `401, 401, 401, 401, 503, 503, 503, 503` (request ke-5 s.d. 8 diblokir Nginx; telemetri valid tetap `201 Created`). |
+
+### Bukti Visual Verifikasi Pasca-Hardening (Tahap 5)
+
+#### a. Verifikasi Skenario 1 — Nmap Scan Ulang & Header Nginx Tanpa Versi
+![After Hardening Nmap Scan Only Port 22 and 80](../blueteam/evidence/05_after_recon_nmap_only_22_80.jpg)
+![After Hardening Curl Header Server Nginx Without Version](../blueteam/evidence/06_after_recon_curl_header_nginx_no_version.jpg)
+
+#### b. Verifikasi Skenario 2 — Aktivasi Fail2ban `sshd` & Hydra Gagal (`0 valid password found`)
+![After Hardening Fail2ban Status sshd Active](../blueteam/evidence/07_after_ssh_fail2ban_sshd_active.jpg)
+![After Hardening Hydra Zero Valid Password Found](../blueteam/evidence/08_after_ssh_hydra_zero_password_found.jpg)
+
+#### c. Verifikasi Skenario 3 — Rate-Limiting Nginx pada `/login` (`401` x4 -> `503` x4)
+![After Hardening Web Login Rate Limit 401 and 503](../blueteam/evidence/09_after_web_login_ratelimit_401_503.jpg)
 
 ---
 

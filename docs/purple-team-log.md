@@ -87,9 +87,12 @@ curl -I http://192.168.10.20
 sudo ufw status verbose
 ```
 **Hasil Verifikasi:**
-* Hanya port `22/tcp` dan `80/tcp` yang berstatus `open`; port `5000/tcp` dan port lainnya berstatus `filtered`.
+* Hanya port `22/tcp` dan `80/tcp` yang berstatus `open`; port `5000/tcp` dan `998` port lainnya berstatus `filtered (no-response)`.
 * Header HTTP menampilkan `Server: nginx` tanpa nomor versi.
 * Status UFW aktif dengan kebijakan `Default: deny (incoming)`.
+
+![After Hardening Nmap Scan Only Port 22 and 80](blueteam/evidence/05_after_recon_nmap_only_22_80.jpg)
+![After Hardening Curl Header Server Nginx Without Version](blueteam/evidence/06_after_recon_curl_header_nginx_no_version.jpg)
 
 ---
 
@@ -166,16 +169,20 @@ hydra -l bagas -P pass.txt ssh://192.168.10.20 -t 4 -V
    ```
 
 ### Tahap 5: Verifikasi Ulang Pasca-Hardening
-1. **Uji Ulang Hydra dari Attacker-Node:**
+1. **Verifikasi Status Jail Fail2ban di Target-Node:**
+   ```bash
+   sudo systemctl restart fail2ban
+   sudo systemctl enable fail2ban
+   sudo fail2ban-client status sshd
+   ```
+   * Layanan `fail2ban` aktif memantau `/var/log/auth.log` pada jail `sshd` dan memblokir IP penyerang (`192.168.10.10`) setelah melewati batas `maxretry=3`.
+   ![After Hardening Fail2ban Status sshd Active](blueteam/evidence/07_after_ssh_fail2ban_sshd_active.jpg)
+2. **Uji Ulang Hydra dari Attacker-Node:**
    ```bash
    hydra -l bagas -P pass.txt ssh://192.168.10.20 -t 4 -V
    ```
-   * Setelah 3 kali percobaan gagal, koneksi ke-4 langsung ditolak/diputus oleh firewall (`Connection reset by peer` / `Connection timed out`).
-2. **Verifikasi Status Jail Fail2ban di Target-Node:**
-   ```bash
-   sudo fail2ban-client status sshd
-   ```
-   * Output mengonfirmasi `Currently banned: 1` dengan `Banned IP list: 192.168.10.10`.
+   * Setelah kebijakan password kuat PAM `pwquality` dan Fail2ban aktif, serangan ulang Hydra menggunakan wordlist yang sama gagal menembus akun `bagas` (**`1 of 1 target completed, 0 valid password found`**).
+   ![After Hardening Hydra Zero Valid Password Found](blueteam/evidence/08_after_ssh_hydra_zero_password_found.jpg)
 3. **Verifikasi Penolakan Password Lemah & Root Login:**
    * `ssh root@192.168.10.20` -> `Permission denied`.
    * `passwd bagas` dengan password tanpa huruf kapital atau sama dengan password lama ditolak (`BAD PASSWORD`) hingga proses dihentikan otomatis (`password unchanged`).
@@ -296,6 +303,7 @@ done
    503
    ```
    *4 request pertama (1 kuota awal + 3 burst) diproses dan ditolak dengan `401`, sedangkan request ke-5 hingga ke-8 langsung ditahan oleh Nginx dengan HTTP `503 Service Temporarily Unavailable`.*
+   ![After Hardening Web Login Rate Limit 401 and 503](blueteam/evidence/09_after_web_login_ratelimit_401_503.jpg)
 2. **Uji Fungsionalitas Telemetri Sah (`/api/telemetry`):**
    ```bash
    curl -i -X POST "http://192.168.10.20/api/telemetry" \
