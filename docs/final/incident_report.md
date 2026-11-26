@@ -121,14 +121,18 @@ Setiap skenario serangan dalam [`../redteam/attack_plan.md`](../redteam/attack_p
 Mengacu pada Tahap 4 Purple Team Loop ([`../purple-team-log.md`](../purple-team-log.md)), Blue Team menerapkan langkah penahanan, penghapusan celah, dan pemulihan layanan berikut:
 
 1. **Mitigasi Skenario 1 (UFW & Nginx Reverse Proxy):**
-   * Mengaktifkan UFW `default deny incoming` dan hanya membuka port `22/tcp` serta `80/tcp`.
+   * Mengaktifkan UFW `default deny incoming`, menghapus rule port `5000/tcp`, dan hanya membuka port `22/tcp` serta `80/tcp`.
    * Mengisolasi aplikasi Flask di loopback internal (`127.0.0.1:5000`) di belakang Nginx dengan konfigurasi `server_tokens off;`.
+   * ![Hardening 1 UFW Default Deny and Nginx](../blueteam/evidence/10_hardening1_ufw_default_deny_and_nginx.jpg)
 2. **Mitigasi Skenario 2 (SSH Hardening, PAM `pwquality`, & Fail2ban):**
-   * Menetapkan `PermitRootLogin no` pada `/etc/ssh/sshd_config` dan menerapkan aturan kompleksitas kata sandi di `/etc/security/pwquality.conf`.
+   * Menetapkan `PermitRootLogin no` pada `/etc/ssh/sshd_config` (`permitrootlogin no`) dan menerapkan aturan kompleksitas kata sandi di `/etc/security/pwquality.conf`.
    * Mengaktifkan jail `[sshd]` pada `/etc/fail2ban/jail.local` (`maxretry=3`, `findtime=300`, `bantime=600`) untuk memblokir IP penyerang secara otomatis melalui netfilter.
+   * ![Hardening 2 SSH PermitRootLogin No and Fail2ban Config](../blueteam/evidence/11_hardening2_ssh_permitrootlogin_and_fail2ban_config.jpg)
 3. **Mitigasi Skenario 3 (Nginx Rate Limiting & Application Hardening Kategori C):**
    * Menambahkan `limit_req_zone $binary_remote_addr zone=login_limit:10m rate=5r/m;` dan `limit_req zone=login_limit burst=3 nodelay;` khusus pada blok `location /login` di Nginx.
-   * Menjalankan backend Flask sebagai layanan systemd (`backend.service`) dengan pembacaan `.env` (`chmod 600`), validasi `secrets.compare_digest`, `TELEMETRY_RULES`, dan RBAC multi-role.
+   * Menjalankan backend Flask dengan pembacaan `.env` (`chmod 600`), validasi `secrets.compare_digest`, `TELEMETRY_RULES`, dan RBAC multi-role.
+   * ![Hardening 3 Nginx Rate Limit Config](../blueteam/evidence/13_hardening3_nginx_ratelimit_login_config.jpg)
+   * ![Final Hardening Verification Summary](../blueteam/evidence/14_hardening_final_verification_summary.jpg)
 
 ---
 
@@ -149,8 +153,9 @@ Red Team mengulangi ketiga skenario serangan untuk membuktikan efektivitas mitig
 ![After Hardening Nmap Scan Only Port 22 and 80](../blueteam/evidence/05_after_recon_nmap_only_22_80.jpg)
 ![After Hardening Curl Header Server Nginx Without Version](../blueteam/evidence/06_after_recon_curl_header_nginx_no_version.jpg)
 
-#### b. Verifikasi Skenario 2 — Aktivasi Fail2ban `sshd` & Hydra Gagal (`0 valid password found`)
+#### b. Verifikasi Skenario 2 — Aktivasi Fail2ban `sshd`, Ban IP `192.168.10.10`, & Hydra Gagal (`0 valid password found`)
 ![After Hardening Fail2ban Status sshd Active](../blueteam/evidence/07_after_ssh_fail2ban_sshd_active.jpg)
+![After Hardening Fail2ban Banned IP 192.168.10.10](../blueteam/evidence/12_hardening2_fail2ban_banned_ip_192_168_10_10.jpg)
 ![After Hardening Hydra Zero Valid Password Found](../blueteam/evidence/08_after_ssh_hydra_zero_password_found.jpg)
 
 #### c. Verifikasi Skenario 3 — Rate-Limiting Nginx pada `/login` (`401` x4 -> `503` x4)

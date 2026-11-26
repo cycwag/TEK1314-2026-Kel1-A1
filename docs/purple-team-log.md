@@ -80,6 +80,8 @@ sudo so-import-pcap /tmp/recon_baseline.pcap
    sudo nginx -t && sudo systemctl reload nginx
    ```
 
+![Hardening 1 UFW Default Deny and Nginx](blueteam/evidence/10_hardening1_ufw_default_deny_and_nginx.jpg)
+
 ### Tahap 5: Verifikasi Ulang Pasca-Hardening
 ```bash
 sudo nmap -sS -sV 192.168.10.20
@@ -168,15 +170,19 @@ hydra -l bagas -P pass.txt ssh://192.168.10.20 -t 4 -V
    sudo systemctl restart fail2ban
    ```
 
+![Hardening 2 SSH PermitRootLogin No and Fail2ban Config](blueteam/evidence/11_hardening2_ssh_permitrootlogin_and_fail2ban_config.jpg)
+
 ### Tahap 5: Verifikasi Ulang Pasca-Hardening
-1. **Verifikasi Status Jail Fail2ban di Target-Node:**
+1. **Verifikasi Status Jail Fail2ban & Pemblokiran IP di Target-Node:**
    ```bash
    sudo systemctl restart fail2ban
    sudo systemctl enable fail2ban
    sudo fail2ban-client status sshd
+   sudo grep "Ban" /var/log/fail2ban.log | tail -n 10
    ```
-   * Layanan `fail2ban` aktif memantau `/var/log/auth.log` pada jail `sshd` dan memblokir IP penyerang (`192.168.10.10`) setelah melewati batas `maxretry=3`.
+   * Layanan `fail2ban` aktif memantau `/var/log/auth.log` pada jail `sshd` dan otomatis memblokir IP penyerang (`Banned IP list: 192.168.10.10`) setelah melewati batas `maxretry=3`.
    ![After Hardening Fail2ban Status sshd Active](blueteam/evidence/07_after_ssh_fail2ban_sshd_active.jpg)
+   ![After Hardening Fail2ban Banned IP 192.168.10.10](blueteam/evidence/12_hardening2_fail2ban_banned_ip_192_168_10_10.jpg)
 2. **Uji Ulang Hydra dari Attacker-Node:**
    ```bash
    hydra -l bagas -P pass.txt ssh://192.168.10.20 -t 4 -V
@@ -281,6 +287,9 @@ done
    ```bash
    sudo nginx -t && sudo systemctl reload nginx
    ```
+
+![Hardening 3 Nginx Rate Limit Config](blueteam/evidence/13_hardening3_nginx_ratelimit_login_config.jpg)
+![Final Hardening Verification Summary](blueteam/evidence/14_hardening_final_verification_summary.jpg)
 
 ### Tahap 5: Verifikasi Ulang Pasca-Hardening
 1. **Uji Rate Limit Brute-Force `/login` (8 Request Cepat):**
