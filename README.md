@@ -22,10 +22,9 @@ Proyek ini membangun, mengamankan (*hardening*), menguji (*Purple Team Loop*), d
 ## Tautan Cepat Artefak Utama (Fase 1 – Fase 3)
 
 ### Fase 3 — Penutupan Siklus (Minggu 14 & 15)
-* **Final Incident Report (NIST SP 800-61r2):** [`docs/final/incident_report.md`](docs/final/incident_report.md) *(atau versi PDF `docs/final/incident_report.pdf`)*
+* **Final Incident Report (NIST SP 800-61r2):** [`docs/final/incident_report.md`](docs/final/incident_report.md)
+* **Video Demo Purple Team Loop (5–8 Menit):** [`docs/final/video_demo.mp4`](docs/final/video_demo.mp4)
 * **Slide Presentasi Final (PDF):** [`docs/presentation-final/slides.pdf`](docs/presentation-final/slides.pdf)
-* **Video Demo Purple Team Loop (5–8 Menit):**
-  * **Tautan Video Demo (Google Drive / YouTube Unlisted):** *[Tautan Video Demo akan diperbarui di sini setelah proses render selesai]* (atau berkas [`docs/final/video_demo.mp4`](docs/final/)).
 
 ### Fase 2 — Hardening, Simulasi Serangan & Purple Team Loop (Minggu 9 – 13)
 * **Log Lengkap Purple Team Loop (Tahap 1–5):** [`docs/purple-team-log.md`](docs/purple-team-log.md)
@@ -97,7 +96,8 @@ TEK1314-2026-Kel1-A1/
     │       └── README.md
     ├── purple-team-log.md                     # Log lengkap Siklus Purple Team Loop (Tahap 1-5) untuk 3 skenario
     ├── final/                                 # Artefak Final Fase 3 (Minggu 14 & 15)
-    │   └── incident_report.md                 # Final Incident Report sesuai struktur NIST SP 800-61r2
+    │   ├── incident_report.md                 # Final Incident Report sesuai struktur NIST SP 800-61r2
+    │   └── video_demo.mp4                     # Video demo Purple Team Loop (Bagian VI)
     ├── presentation-final/                    # Slide Presentasi Final (Minggu 14 & 15)
     │   └── slides.pdf                         # Slide presentasi akhir (format PDF)
     ├── DOKUMENTASI_INSTALASI_UTAMA/           # Bukti instalasi VM Security Onion & Workstation
