@@ -22,7 +22,7 @@ Proyek ini membangun, mengamankan (*hardening*), menguji (*Purple Team Loop*), d
 ## Tautan Cepat Artefak Utama (Fase 1 – Fase 3)
 
 ### Fase 3 — Penutupan Siklus (Minggu 14 & 15)
-* **Final Incident Report (NIST SP 800-61r2):** [`docs/final/incident_report.md`](docs/final/incident_report.md)
+* **Final Incident Report (NIST SP 800-61r2 PDF):** [`docs/final/incident_report.pdf`](docs/final/incident_report.pdf) *(versi Markdown: [`docs/final/incident_report.md`](docs/final/incident_report.md))*
 * **Video Demo Purple Team Loop (5–8 Menit):** [`docs/final/video_demo.mp4`](docs/final/video_demo.mp4)
 * **Slide Presentasi Final (PDF):** [`docs/presentation-final/slides.pdf`](docs/presentation-final/slides.pdf)
 
@@ -96,7 +96,8 @@ TEK1314-2026-Kel1-A1/
     │       └── README.md
     ├── purple-team-log.md                     # Log lengkap Siklus Purple Team Loop (Tahap 1-5) untuk 3 skenario
     ├── final/                                 # Artefak Final Fase 3 (Minggu 14 & 15)
-    │   ├── incident_report.md                 # Final Incident Report sesuai struktur NIST SP 800-61r2
+    │   ├── incident_report.pdf                # Final Incident Report (format PDF sesuai struktur NIST SP 800-61r2)
+    │   ├── incident_report.md                 # Final Incident Report (versi Markdown)
     │   └── video_demo.mp4                     # Video demo Purple Team Loop (Bagian VI)
     ├── presentation-final/                    # Slide Presentasi Final (Minggu 14 & 15)
     │   └── slides.pdf                         # Slide presentasi akhir (format PDF)
